@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELISA 4PL Analyzer</title>
+<style>
+  :root { --bd:#d3d8e0; --bg:#f7f9fc; --accent:#2b6cb0; --muted:#5a6472; }
+  * { box-sizing:border-box; }
+  body { font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:0; color:#1a2230; background:#eef1f6; }
+  header { background:#1f3350; color:#fff; padding:14px 20px; }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:2px 0 0; font-size:12px; opacity:.8; }
+  main { max-width:1180px; margin:16px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { margin:0 0 10px; font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  textarea { width:100%; min-height:120px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:8px; resize:vertical; }
+  input[type=text], input[type=number], select { border:1px solid var(--bd); border-radius:5px; padding:5px 7px; font:inherit; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:7px 13px; font:inherit; cursor:pointer; }
+  button.sec { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  button:hover { filter:brightness(1.06); }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .row > label { display:flex; align-items:center; gap:5px; }
+  #tabs { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .tab { display:flex; align-items:center; gap:6px; border:1px solid var(--bd); border-radius:6px 6px 0 0; padding:6px 10px; background:var(--bg); cursor:pointer; }
+  .tab.active { background:#fff; border-bottom-color:#fff; font-weight:600; box-shadow:inset 0 2px 0 var(--accent); }
+  .tab .del { color:#b04; font-weight:bold; padding:0 2px; }
+  .tab .del:hover { color:#d00; }
+  #plate { overflow:auto; max-width:100%; }
+  table.plate { border-collapse:collapse; font-size:11px; }
+  table.plate th { color:var(--muted); font-weight:600; padding:2px 4px; }
+  table.plate td { border:1px solid var(--bd); padding:3px 5px; text-align:center; min-width:44px; cursor:pointer; background:#fff; user-select:none; }
+  table.plate td.bg { background:#ffe7b3; box-shadow:inset 0 0 0 1px #d99a1a; }
+  table.plate td.zero { color:#999; }
+  .assign { display:flex; flex-direction:column; gap:6px; max-width:660px; }
+  .assign .cell { display:flex; gap:8px; align-items:center; }
+  .assign .cell span { color:var(--muted); min-width:54px; font-size:12px; }
+  .assign .cell input { flex:1; }
+  table.res { border-collapse:collapse; width:100%; font-size:13px; }
+  table.res th, table.res td { border:1px solid var(--bd); padding:6px 8px; text-align:right; }
+  table.res th { background:var(--bg); text-align:right; color:var(--muted); }
+  table.res td:first-child, table.res th:first-child { text-align:left; }
+  table.res tr.hiddenRow td { opacity:.45; }
+  .swatch { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin-right:5px; }
+  .warn { color:#b45309; font-size:12px; }
+  .hint { color:var(--muted); font-size:12px; margin:4px 0 0; }
+  #chartWrap { overflow:auto; }
+  .grpstyle { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .grpstyle .g { display:flex; gap:8px; align-items:center; border:1px solid var(--bd); border-radius:6px; padding:5px 8px; max-width:660px; }
+  .grpstyle .g b { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ELISA 4PL Analyzer</h1>
+  <p>Multiple plates · annotate · background-subtract · 4-parameter logistic fit · EC50 / Max / AUC · SVG + PNG + JSON export</p>
+</header>
+<main>
+
+  <div class="card">
+    <h2>Plates</h2>
+    <div id="tabs"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="sec" id="loadExample">Load example</button>
+      <button class="sec" id="loadJsonBtn">Load saved session (.json)</button>
+      <input type="file" id="jsonFile" accept=".json" hidden>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1 · Raw data (active plate)</h2>
+    <p class="hint">Paste an 8×12 grid (rows A–H, columns 1–12). Row labels and extra text are ignored — only numbers are read. Tabs, spaces, or commas all work.</p>
+    <textarea id="raw" placeholder="Paste this plate here…"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="parseBtn">Parse plate</button>
+      <span id="parseMsg" class="hint"></span>
+    </div>
+  </div>
+
+  <div class="card" id="setupCard" style="display:none">
+    <h2>2 · Concentrations &amp; orientation</h2>
+    <div class="row">
+      <label>Concentration axis:
+        <select id="orient">
+          <option value="col">across columns (per-row series)</option>
+          <option value="row">across rows (per-column series)</option>
+        </select>
+      </label>
+      <label>Unit: <input type="text" id="unit" size="6" placeholder="e.g. µg/mL"></label>
+    </div>
+    <p class="hint" style="margin-top:8px">Concentration for each <span id="axisWord">column</span> (comma/space separated). Use <b>0</b> for blank/background wells.</p>
+    <input type="text" id="concText" style="width:100%" >
+    <div class="row" style="margin-top:8px">
+      <span class="hint">Quick serial dilution:</span>
+      <label>top <input type="number" id="dilTop" value="20" style="width:70px"></label>
+      <label>fold <input type="number" id="dilFold" value="3" style="width:60px"></label>
+      <label>n <input type="number" id="dilN" value="11" style="width:55px"></label>
+      <label><input type="checkbox" id="dilZero" checked> add 0</label>
+      <button class="sec" id="dilGen">Fill</button>
+    </div>
+  </div>
+
+  <div class="card" id="plateCard" style="display:none">
+    <h2>3 · Plate &amp; background (active plate)</h2>
+    <div class="row" style="margin-bottom:8px">
+      <label>Background:
+        <select id="bgMode">
+          <option value="none">none</option>
+          <option value="zero">use 0-concentration wells</option>
+          <option value="custom">custom (click wells below)</option>
+        </select>
+      </label>
+      <span id="bgVal" class="hint"></span>
+    </div>
+    <div id="plate"></div>
+    <p class="hint" id="bgHint"></p>
+  </div>
+
+  <div class="card" id="groupCard" style="display:none">
+    <h2>4 · Test articles &amp; replicates (active plate)</h2>
+    <p class="hint"><span id="grpWord">Rows</span> sharing the same label are replicates of one test article. Leave blank to exclude.</p>
+    <div class="assign" id="assign"></div>
+  </div>
+
+  <div class="card" id="fitCard" style="display:none">
+    <h2>5 · Fit &amp; analyze (all plates)</h2>
+    <div class="row">
+      <label><input type="radio" name="fitmode" value="mean" checked> Fit mean of replicates (± SD)</label>
+      <label><input type="radio" name="fitmode" value="individual"> Fit all individual points</label>
+      <label style="margin-left:8px"><input type="checkbox" id="combine"> Combine identical labels across plates</label>
+      <button id="analyzeBtn">Analyze</button>
+    </div>
+    <p class="hint">Curve appearance &amp; visibility (uncheck to hide from graph):</p>
+    <div class="grpstyle" id="curveStyle"></div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none">
+    <h2>6 · Results (all plates)</h2>
+    <div id="resTable"></div>
+    <div class="row" style="margin:12px 0">
+      <button id="exportSvg">Export graph (SVG)</button>
+      <button id="exportPng">Export graph (PNG)</button>
+      <label>PNG scale: <select id="pngScale"><option value="2">2×</option><option value="3" selected>3×</option><option value="4">4×</option></select></label>
+      <button class="sec" id="saveJson">Save session (JSON)</button>
+    </div>
+    <p class="hint" id="pngInfo"></p>
+    <div id="chartWrap"></div>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PALETTE = ["#2b6cb0","#c0392b","#27856a","#8e44ad","#d68910","#16a085","#7f8c8d","#c0448f","#2e86c1","#a04000"];
+const SYMBOLS = ["circle","square","triangle","diamond"];
+const uid = () => Math.random().toString(36).slice(2,9);
+const esc = s => (s+"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let session = { version:4, plates:[], activeId:null, combine:false, fitMode:"mean", curveStyles:{}, hidden:{} };
+let lastResults = null;
+
+function newPlate(name){ return { id:uid(), name, rawText:"", grid:null, orientation:"col", concs:[], unit:"", groupLabels:[], bgMode:"none", bgWells:[] }; }
+function P(){ return session.plates.find(p=>p.id===session.activeId) || null; }
+function nConc(p){ return p.orientation==="col" ? 12 : 8; }
+function nGroups(p){ return p.orientation==="col" ? 8 : 12; }
+
+/* ---------- parsing ---------- */
+function numsFrom(line){ const m=line.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g); return m?m.map(Number):[]; }
+function parseActive(){
+  saveUIToActive();
+  const p=P(); if(!p) return;
+  const lines=p.rawText.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
+  const rows=[];
+  for(const l of lines){ const n=numsFrom(l);
+    if(n.length>=12) rows.push(n.slice(0,12));
+    else if(n.length>0) rows.push(n.concat(Array(12-n.length).fill(NaN)).slice(0,12)); }
+  if(!rows.length){ $("parseMsg").textContent="No numeric rows found."; return; }
+  const grid=rows.slice(0,8); while(grid.length<8) grid.push(Array(12).fill(NaN));
+  p.grid=grid;
+  $("parseMsg").textContent="Parsed "+rows.length+" row(s) × 12 columns.";
+  if(!p.concs.length){ p.concs=numsFrom("20, 6.66666667, 2.22222222, 0.74074074, 0.246914, 0.08230453, 0.02743484, 0.00914495, 0.00304832, 0.00101611, 0.0003387, 0"); }
+  ["setupCard","plateCard","groupCard","fitCard"].forEach(id=>$(id).style.display="block");
+  loadActiveIntoUI();
+}
+
+/* ---------- UI <-> active plate ---------- */
+function saveUIToActive(){ const p=P(); if(!p) return;
+  p.rawText=$("raw").value; p.unit=$("unit").value.trim(); p.orientation=$("orient").value;
+  p.concs=numsFrom($("concText").value); p.bgMode=$("bgMode").value; }
+function loadActiveIntoUI(){ const p=P(); if(!p) return;
+  $("raw").value=p.rawText||""; $("unit").value=p.unit||""; $("orient").value=p.orientation;
+  $("concText").value=(p.concs||[]).join(", "); $("bgMode").value=p.bgMode;
+  $("axisWord").textContent=p.orientation==="col"?"column":"row";
+  $("grpWord").textContent=p.orientation==="col"?"Rows":"Columns";
+  renderPlate(); renderAssign(); refreshCurveStyles(); }
+
+/* ---------- plate render ---------- */
+function isZeroWell(p,r,c){ const conc=p.orientation==="col"?p.concs[c]:p.concs[r]; return conc===0; }
+function bgValueFor(p){
+  let wells=[];
+  if(p.bgMode==="zero"){ for(let r=0;r<8;r++) for(let c=0;c<12;c++) if(isZeroWell(p,r,c)) wells.push([r,c]); }
+  else if(p.bgMode==="custom"){ wells=p.bgWells; }
+  const vals=wells.map(w=>p.grid[w[0]][w[1]]).filter(v=>!isNaN(v));
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+}
+function renderPlate(){ const p=P(); if(!p||!p.grid){ $("plate").innerHTML=""; return; }
+  const rl="ABCDEFGH";
+  let h="<table class='plate'><tr><th></th>";
+  for(let c=0;c<12;c++) h+="<th>"+(c+1)+"</th>"; h+="</tr>";
+  for(let r=0;r<8;r++){ h+="<tr><th>"+rl[r]+"</th>";
+    for(let c=0;c<12;c++){ const v=p.grid[r][c];
+      const isBg=(p.bgMode==="zero"&&isZeroWell(p,r,c))||(p.bgMode==="custom"&&p.bgWells.some(w=>w[0]===r&&w[1]===c));
+      const cls=(isBg?"bg ":"")+(isZeroWell(p,r,c)?"zero":"");
+      h+="<td class='"+cls+"' data-r='"+r+"' data-c='"+c+"'>"+(isNaN(v)?"":v)+"</td>"; }
+    h+="</tr>"; }
+  h+="</table>"; $("plate").innerHTML=h;
+  $("plate").querySelectorAll("td[data-r]").forEach(td=>{ td.onclick=()=>{ if(p.bgMode!=="custom") return;
+    const r=+td.dataset.r,c=+td.dataset.c; const i=p.bgWells.findIndex(w=>w[0]===r&&w[1]===c);
+    if(i>=0) p.bgWells.splice(i,1); else p.bgWells.push([r,c]); renderPlate(); }; });
+  $("bgHint").textContent = p.bgMode==="custom" ? "Click wells to toggle them as background (highlighted)."
+    : (p.bgMode==="zero" ? "0-concentration wells are used as background (highlighted)." : "");
+  $("bgVal").textContent = p.bgMode==="none" ? "" : "mean background = "+fmt(bgValueFor(p));
+}
+
+/* ---------- group assignment (active plate) ---------- */
+function renderAssign(){ const p=P(); if(!p) return;
+  const n=nGroups(p); if(p.groupLabels.length!==n) p.groupLabels=Array(n).fill("");
+  const rl="ABCDEFGH"; let h="";
+  for(let i=0;i<n;i++){ const name=p.orientation==="col"?"Row "+rl[i]:"Col "+(i+1);
+    h+="<div class='cell'><span>"+name+"</span><input type='text' data-i='"+i+"' value='"+esc(p.groupLabels[i]||"")+"' placeholder='label'></div>"; }
+  $("assign").innerHTML=h;
+  $("assign").querySelectorAll("input").forEach(inp=>{ inp.oninput=()=>{ p.groupLabels[+inp.dataset.i]=inp.value.trim(); refreshCurveStyles(); }; });
+}
+
+/* ---------- build curves across all plates ---------- */
+function plateGroups(p){
+  const nC=nConc(p), bg=bgValueFor(p);
+  const uniq=[]; p.groupLabels.forEach(l=>{ if(l&&!uniq.includes(l)) uniq.push(l); });
+  const out={};
+  for(const g of uniq){ const idx=[]; p.groupLabels.forEach((l,i)=>{ if(l===g) idx.push(i); });
+    const byConc={};
+    for(let k=0;k<nC;k++){ const conc=p.concs[k]; if(conc===undefined) continue; const vals=[];
+      idx.forEach(gi=>{ let r,c; if(p.orientation==="col"){r=gi;c=k;}else{r=k;c=gi;}
+        const v=p.grid&&p.grid[r]?p.grid[r][c]:NaN; if(!isNaN(v)) vals.push(v-bg); });
+      if(vals.length) byConc[k]={conc,vals}; }
+    out[g]={label:g,byConc}; }
+  return out;
+}
+function buildCurves(){
+  saveUIToActive();
+  const map={}, curves=[];
+  for(const p of session.plates){ if(!p.grid) continue;
+    const groups=plateGroups(p);
+    for(const label in groups){
+      const key=session.combine?label:(label+" · "+p.name);
+      let cur=map[key]; if(!cur){ cur={key,name:key,label,byConc:{}}; map[key]=cur; curves.push(cur); }
+      Object.values(groups[label].byConc).forEach(o=>{ const ck=o.conc;
+        if(!cur.byConc[ck]) cur.byConc[ck]={conc:o.conc,vals:[]}; cur.byConc[ck].vals.push(...o.vals); }); }
+  }
+  return curves;
+}
+function refreshCurveStyles(){
+  const curves=buildCurves();
+  curves.forEach((c,i)=>{ if(!session.curveStyles[c.key]) session.curveStyles[c.key]={color:PALETTE[i%PALETTE.length],symbol:SYMBOLS[i%SYMBOLS.length]}; });
+  let h="";
+  curves.forEach(c=>{ const s=session.curveStyles[c.key]; const shown=!session.hidden[c.key];
+    h+="<div class='g'>"
+      +"<input type='checkbox' class='cvis' data-k='"+esc(c.key)+"' "+(shown?"checked":"")+" title='Show in graph'>"
+      +"<b title='"+esc(c.name)+"'>"+esc(c.name)+"</b>"
+      +"<input type='color' class='ccol' data-k='"+esc(c.key)+"' value='"+s.color+"'>"
+      +"<select class='csym' data-k='"+esc(c.key)+"'>"+SYMBOLS.map(sy=>"<option "+(sy===s.symbol?"selected":"")+">"+sy+"</option>").join("")+"</select></div>"; });
+  $("curveStyle").innerHTML=h||"<span class='hint'>Label some wells to define curves.</span>";
+  $("curveStyle").querySelectorAll(".ccol").forEach(el=>el.oninput=()=>{ session.curveStyles[el.dataset.k].color=el.value; if(lastResults) renderResults(); });
+  $("curveStyle").querySelectorAll(".csym").forEach(el=>el.onchange=()=>{ session.curveStyles[el.dataset.k].symbol=el.value; if(lastResults) renderResults(); });
+  $("curveStyle").querySelectorAll(".cvis").forEach(el=>el.onchange=()=>{ session.hidden[el.dataset.k]=!el.checked; if(lastResults) renderResults(); });
+}
+
+/* ---------- 4PL fit (Levenberg–Marquardt) ---------- */
+function fourPL(x,p){ const [a,d,c,b]=p; return d+(a-d)/(1+Math.pow(x/c,b)); }
+function solve(A,b){ const n=A.length, M=A.map((row,i)=>row.concat([b[i]]));
+  for(let col=0;col<n;col++){ let piv=col; for(let r=col+1;r<n;r++) if(Math.abs(M[r][col])>Math.abs(M[piv][col])) piv=r;
+    if(Math.abs(M[piv][col])<1e-14) return null; [M[col],M[piv]]=[M[piv],M[col]];
+    const pv=M[col][col]; for(let c=col;c<=n;c++) M[col][c]/=pv;
+    for(let r=0;r<n;r++){ if(r===col) continue; const f=M[r][col]; for(let c=col;c<=n;c++) M[r][c]-=f*M[col][c]; } }
+  return M.map(row=>row[n]); }
+function fit4PL(xs,ys){ if(xs.length<4) return null;
+  const order=xs.map((x,i)=>[x,ys[i]]).sort((a,b)=>a[0]-b[0]);
+  const a0=order[0][1], d0=order[order.length-1][1];
+  const gm=Math.pow(10,xs.reduce((s,x)=>s+Math.log10(x),0)/xs.length);
+  let p=[a0,d0,gm,1];
+  const sse=pp=>xs.reduce((s,x,i)=>{const r=ys[i]-fourPL(x,pp);return s+r*r;},0);
+  let cur=sse(p), lambda=1e-2, n=4, m=xs.length;
+  for(let it=0;it<300;it++){ const base=xs.map(x=>fourPL(x,p));
+    const J=Array.from({length:m},()=>new Array(n));
+    for(let j=0;j<n;j++){ const pp=p.slice(); const hh=Math.max(1e-9,Math.abs(p[j])*1e-6); pp[j]+=hh;
+      for(let i=0;i<m;i++) J[i][j]=(fourPL(xs[i],pp)-base[i])/hh; }
+    const r=xs.map((x,i)=>ys[i]-base[i]);
+    const JtJ=Array.from({length:n},()=>new Array(n).fill(0)), Jtr=new Array(n).fill(0);
+    for(let i=0;i<m;i++) for(let j=0;j<n;j++){ Jtr[j]+=J[i][j]*r[i]; for(let k=0;k<n;k++) JtJ[j][k]+=J[i][j]*J[i][k]; }
+    let ok=false;
+    for(let t=0;t<14;t++){ const A=JtJ.map((row,j)=>row.map((v,k)=>j===k?v*(1+lambda):v));
+      const d=solve(A,Jtr); if(!d){lambda*=10;continue;}
+      const pn=p.map((v,j)=>v+d[j]); if(pn[2]<=0){lambda*=10;continue;}
+      const s=sse(pn); if(s<cur){ p=pn; cur=s; lambda=Math.max(lambda/3,1e-12); ok=true; break; } else lambda*=3; }
+    if(!ok) break; }
+  const meanY=ys.reduce((a,b)=>a+b,0)/ys.length;
+  const sst=ys.reduce((s,y)=>s+(y-meanY)*(y-meanY),0);
+  return {a:p[0],d:p[1],c:p[2],b:p[3],r2:sst>0?1-cur/sst:0}; }
+function aucLog10(pts){ const s=pts.filter(p=>p.x>0&&isFinite(p.y)).sort((a,b)=>a.x-b.x);
+  let a=0; for(let i=1;i<s.length;i++){ const dx=Math.log10(s[i].x)-Math.log10(s[i-1].x); a+=dx*(s[i].y+s[i-1].y)/2; } return a; }
+
+/* ---------- analyze ---------- */
+function analyze(){
+  session.fitMode=document.querySelector("input[name=fitmode]:checked").value;
+  session.combine=$("combine").checked;
+  const curves=buildCurves(); refreshCurveStyles();
+  const results=[];
+  for(const cur of curves){
+    const means=Object.values(cur.byConc).map(o=>{ const m=o.vals.reduce((a,b)=>a+b,0)/o.vals.length;
+      const sd=Math.sqrt(o.vals.reduce((a,b)=>a+(b-m)**2,0)/Math.max(1,o.vals.length-1));
+      return {x:o.conc,y:m,sd,n:o.vals.length,vals:o.vals}; }).sort((a,b)=>a.x-b.x);
+    let fitX=[],fitY=[];
+    if(session.fitMode==="mean"){ means.forEach(m=>{if(m.x>0){fitX.push(m.x);fitY.push(m.y);}}); }
+    else { means.forEach(m=>{ if(m.x>0) m.vals.forEach(v=>{fitX.push(m.x);fitY.push(v);}); }); }
+    const fit=fit4PL(fitX,fitY);
+    const auc=aucLog10(means.map(m=>({x:m.x,y:m.y})));
+    const obsMax=Math.max(...means.map(m=>m.y));
+    results.push({key:cur.key, name:cur.name, style:session.curveStyles[cur.key], means, fit, auc, obsMax});
+  }
+  const p=P();
+  lastResults={results, unit:p?p.unit:"", fitMode:session.fitMode};
+  renderResults(); $("resultsCard").style.display="block";
+}
+
+/* ---------- results + chart ---------- */
+function fmt(x){ if(x===null||x===undefined||!isFinite(x)) return "—"; const a=Math.abs(x);
+  if(a!==0&&(a<1e-3||a>=1e5)) return x.toExponential(3); return parseFloat(x.toPrecision(4)).toString(); }
+function renderResults(){ const u=lastResults.unit?(" "+lastResults.unit):"";
+  let h="<table class='res'><tr><th>Curve</th><th>EC50"+u+"</th><th>Max (fit top)</th><th>Observed max</th><th>Bottom</th><th>Hill slope</th><th>AUC (log10)</th><th>R²</th></tr>";
+  lastResults.results.forEach(g=>{ const f=g.fit, flag=f&&f.r2<0.8?" <span class='warn'>(low R²)</span>":"";
+    const hid=session.hidden[g.key]?" hiddenRow":"";
+    h+="<tr class='"+hid.trim()+"'><td><span class='swatch' style='background:"+g.style.color+"'></span>"+esc(g.name)+(session.hidden[g.key]?" (hidden)":"")+"</td>"
+      +"<td>"+(f?fmt(f.c):"—")+"</td><td>"+(f?fmt(f.d):"—")+"</td><td>"+fmt(g.obsMax)+"</td>"
+      +"<td>"+(f?fmt(f.a):"—")+"</td><td>"+(f?fmt(f.b):"—")+"</td><td>"+fmt(g.auc)+"</td>"
+      +"<td>"+(f?fmt(f.r2):"—")+flag+"</td></tr>"; });
+  h+="</table>"; $("resTable").innerHTML=h; renderChart(); }
+function symMarkup(sym,cx,cy,s,color){
+  if(sym==="square") return `<rect x="${cx-s}" y="${cy-s}" width="${2*s}" height="${2*s}" fill="${color}"/>`;
+  if(sym==="triangle") return `<polygon points="${cx},${cy-s} ${cx+s},${cy+s} ${cx-s},${cy+s}" fill="${color}"/>`;
+  if(sym==="diamond") return `<polygon points="${cx},${cy-s} ${cx+s},${cy} ${cx},${cy+s} ${cx-s},${cy}" fill="${color}"/>`;
+  return `<circle cx="${cx}" cy="${cy}" r="${s}" fill="${color}"/>`; }
+function renderChart(){
+  const R=lastResults.results;
+  const V=R.filter(g=>!session.hidden[g.key]);
+  if(!V.length){ $("chartWrap").innerHTML="<p class='hint'>All curves hidden — enable at least one in section 5 to plot.</p>"; $("pngInfo").textContent=""; return; }
+  const FS=24;                                             // chart font (large, independent of page UI)
+  const mL=120, mT=36, mB=96;
+  const maxLen=Math.max(14, ...V.map(g=>g.name.length));
+  const mR=Math.min(760, Math.round(maxLen*14.2)+96);
+  const pw=840;
+  const LH=140;
+  const ph=Math.max(760, V.length*LH + 28);
+  const W=mL+pw+mR, H=mT+ph+mB;
+  let xs=[],ys=[];
+  V.forEach(g=>g.means.forEach(m=>{ if(m.x>0){xs.push(m.x);ys.push(m.y+(m.sd||0));} }));
+  if(!xs.length){ $("chartWrap").innerHTML="<p class='hint'>No positive concentrations to plot.</p>"; $("pngInfo").textContent=""; return; }
+  const xmin=Math.min(...xs), xmax=Math.max(...xs), lx0=Math.log10(xmin)-0.15, lx1=Math.log10(xmax)+0.15;
+  const ymax=Math.max(...ys,...V.map(g=>g.fit?g.fit.d:0))*1.08, ymin=Math.min(0,...ys);
+  const X=x=>mL+(Math.log10(x)-lx0)/(lx1-lx0)*pw, Y=y=>mT+ph-(y-ymin)/(ymax-ymin)*ph;
+  let s=`<svg id="theChart" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Arial,sans-serif" font-size="${FS}">`;
+  s+=`<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
+  for(let i=0;i<=5;i++){ const yv=ymin+(ymax-ymin)*i/5, py=Y(yv);
+    s+=`<line x1="${mL}" y1="${py}" x2="${mL+pw}" y2="${py}" stroke="#eceff3"/>`;
+    s+=`<text x="${mL-14}" y="${py+8}" text-anchor="end" fill="#555">${fmt(yv)}</text>`; }
+  for(let k=Math.ceil(lx0);k<=Math.floor(lx1);k++){ const xv=Math.pow(10,k), px=X(xv);
+    s+=`<line x1="${px}" y1="${mT}" x2="${px}" y2="${mT+ph}" stroke="#eceff3"/>`;
+    s+=`<line x1="${px}" y1="${mT+ph}" x2="${px}" y2="${mT+ph+10}" stroke="#888"/>`;
+    s+=`<text x="${px}" y="${mT+ph+34}" text-anchor="middle" fill="#555">${fmt(xv)}</text>`; }
+  s+=`<line x1="${mL}" y1="${mT}" x2="${mL}" y2="${mT+ph}" stroke="#333"/><line x1="${mL}" y1="${mT+ph}" x2="${mL+pw}" y2="${mT+ph}" stroke="#333"/>`;
+  s+=`<text x="${mL+pw/2}" y="${H-20}" text-anchor="middle" fill="#333">Concentration${lastResults.unit?" ("+lastResults.unit+")":""} — log scale</text>`;
+  s+=`<text x="26" y="${mT+ph/2}" text-anchor="middle" fill="#333" transform="rotate(-90 26 ${mT+ph/2})">Absorbance (background-subtracted)</text>`;
+  V.forEach(g=>{ const col=g.style.color;
+    if(g.fit){ let d=""; for(let i=0;i<=120;i++){ const lx=lx0+(lx1-lx0)*i/120, xv=Math.pow(10,lx), yv=fourPL(xv,[g.fit.a,g.fit.d,g.fit.c,g.fit.b]);
+      d+=(i?"L":"M")+X(xv).toFixed(1)+" "+Y(yv).toFixed(1)+" "; } s+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="3"/>`; }
+    g.means.forEach(m=>{ if(m.x<=0) return; const px=X(m.x);
+      if(lastResults.fitMode==="mean"){ const py=Y(m.y);
+        if(m.sd>0){ s+=`<line x1="${px}" y1="${Y(m.y-m.sd)}" x2="${px}" y2="${Y(m.y+m.sd)}" stroke="${col}" stroke-width="2"/>`;
+          s+=`<line x1="${px-6}" y1="${Y(m.y+m.sd)}" x2="${px+6}" y2="${Y(m.y+m.sd)}" stroke="${col}" stroke-width="2"/>`;
+          s+=`<line x1="${px-6}" y1="${Y(m.y-m.sd)}" x2="${px+6}" y2="${Y(m.y-m.sd)}" stroke="${col}" stroke-width="2"/>`; }
+        s+=symMarkup(g.style.symbol,px,py,8,col);
+      } else { m.vals.forEach(v=>{ s+=symMarkup(g.style.symbol,px,Y(v),6,col); }); }
+    }); });
+  let ly=mT+16;
+  V.forEach(g=>{ s+=symMarkup(g.style.symbol,mL+pw+24,ly,10,g.style.color);
+    s+=`<text x="${mL+pw+46}" y="${ly+8}" fill="#222" font-weight="bold">${esc(g.name)}</text>`; ly+=32;
+    const f=g.fit; s+=`<text x="${mL+pw+46}" y="${ly+8}" fill="#555">EC50 ${f?fmt(f.c):"—"}${lastResults.unit?" "+lastResults.unit:""}</text>`; ly+=30;
+    s+=`<text x="${mL+pw+46}" y="${ly+8}" fill="#555">Max ${f?fmt(f.d):"—"} · AUC ${fmt(g.auc)}</text>`; ly+=30;
+    s+=`<text x="${mL+pw+46}" y="${ly+8}" fill="#555">R² ${f?fmt(f.r2):"—"}</text>`; ly+=48; });
+  s+="</svg>"; $("chartWrap").innerHTML=s;
+  updatePngInfo(W,H);
+}
+function chartSize(){ const svg=$("theChart"); if(!svg) return null;
+  const vb=(svg.getAttribute("viewBox")||"").split(/\s+/).map(Number);
+  const w=vb.length===4?vb[2]:(svg.clientWidth||800), h=vb.length===4?vb[3]:(svg.clientHeight||500);
+  return {w,h}; }
+function updatePngInfo(w,h){ const scale=parseInt($("pngScale").value,10)||3;
+  $("pngInfo").textContent="PNG export size at "+scale+"×: "+Math.round(w*scale)+" × "+Math.round(h*scale)+" px."; }
+
+/* ---------- export / save / load ---------- */
+function download(name,text,type){ const b=new Blob([text],{type}),u=URL.createObjectURL(b);
+  const a=document.createElement("a"); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
+function exportSVG(){ const svg=$("theChart"); if(!svg){alert("Run Analyze first.");return;}
+  download("elisa_graph.svg", '<?xml version="1.0" encoding="UTF-8"?>\n'+svg.outerHTML, "image/svg+xml"); }
+function exportPNG(){
+  const svg=$("theChart"); if(!svg){ alert("Run Analyze first (and keep at least one curve visible)."); return; }
+  const scale=parseInt($("pngScale").value,10)||3;
+  const sz=chartSize(); if(!sz) return;
+  const xml=new XMLSerializer().serializeToString(svg);
+  const src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent('<?xml version="1.0" encoding="UTF-8"?>\n'+xml);
+  const img=new Image();
+  img.onload=()=>{
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.round(sz.w*scale); canvas.height=Math.round(sz.h*scale);
+    const ctx=canvas.getContext("2d");
+    ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    try{
+      canvas.toBlob(blob=>{ if(!blob){ alert("PNG generation failed."); return; }
+        const u=URL.createObjectURL(blob); const a=document.createElement("a");
+        a.href=u; a.download="elisa_graph.png"; a.click(); URL.revokeObjectURL(u);
+      },"image/png");
+    }catch(e){ alert("Could not export PNG: "+e.message); }
+  };
+  img.onerror=()=>alert("Could not render the chart to PNG.");
+  img.src=src;
+}
+function saveJSON(){ saveUIToActive(); session.fitMode=document.querySelector("input[name=fitmode]:checked").value; session.combine=$("combine").checked;
+  download("elisa_session.json", JSON.stringify(session,null,2), "application/json"); }
+function loadJSON(file){ const fr=new FileReader();
+  fr.onload=()=>{ try{ const s=JSON.parse(fr.result);
+    if(s.plates){ session=Object.assign({version:4,plates:[],activeId:null,combine:false,fitMode:"mean",curveStyles:{},hidden:{}},s); if(!session.hidden) session.hidden={}; }
+    else { const p=newPlate("Plate 1"); Object.assign(p,{rawText:s.rawText||"",grid:s.grid,orientation:s.orientation||"col",concs:s.concs||[],unit:s.unit||"",groupLabels:s.groupLabels||[],bgMode:s.bgMode||"none",bgWells:s.bgWells||[]});
+      session={version:4,plates:[p],activeId:p.id,combine:false,fitMode:s.fitMode||"mean",curveStyles:s.groupStyles||{},hidden:{}}; }
+    if(!session.activeId&&session.plates[0]) session.activeId=session.plates[0].id;
+    $("combine").checked=!!session.combine;
+    [...document.querySelectorAll("input[name=fitmode]")].forEach(r=>r.checked=(r.value===session.fitMode));
+    ["setupCard","plateCard","groupCard","fitCard"].forEach(id=>$(id).style.display="block");
+    renderTabs(); loadActiveIntoUI(); analyze();
+  }catch(e){ alert("Could not read session: "+e.message); } };
+  fr.readAsText(file); }
+
+/* ---------- tabs ---------- */
+function renderTabs(){ let h="";
+  session.plates.forEach(p=>{ h+="<div class='tab"+(p.id===session.activeId?" active":"")+"' data-id='"+p.id+"'>"
+      +"<span class='tname' data-id='"+p.id+"'>"+esc(p.name)+"</span>"
+      +"<span class='del' data-id='"+p.id+"' title='Delete plate'>×</span></div>"; });
+  h+="<button class='sec' id='addPlate'>+ Add plate</button>";
+  $("tabs").innerHTML=h;
+  $("tabs").querySelectorAll(".tab").forEach(t=>{ t.onclick=e=>{ if(e.target.classList.contains("del")) return; switchPlate(t.dataset.id); }; });
+  $("tabs").querySelectorAll(".tname").forEach(t=>{ t.ondblclick=()=>{ const p=session.plates.find(x=>x.id===t.dataset.id);
+    const nn=prompt("Rename plate:",p.name); if(nn){ p.name=nn.trim()||p.name; renderTabs(); refreshCurveStyles(); } }; });
+  $("tabs").querySelectorAll(".del").forEach(d=>{ d.onclick=()=>deletePlate(d.dataset.id); });
+  $("addPlate").onclick=addPlate;
+}
+function switchPlate(id){ saveUIToActive(); session.activeId=id; renderTabs(); loadActiveIntoUI(); }
+function addPlate(){ saveUIToActive(); const cur=P(); const p=newPlate("Plate "+(session.plates.length+1));
+  if(cur){ p.orientation=cur.orientation; p.concs=cur.concs.slice(); p.unit=cur.unit; p.groupLabels=cur.groupLabels.slice(); p.bgMode=cur.bgMode; }
+  session.plates.push(p); session.activeId=p.id; renderTabs(); loadActiveIntoUI(); }
+function deletePlate(id){ if(session.plates.length<=1){ alert("At least one plate is required."); return; }
+  if(!confirm("Delete this plate?")) return;
+  session.plates=session.plates.filter(p=>p.id!==id);
+  if(session.activeId===id) session.activeId=session.plates[0].id;
+  renderTabs(); loadActiveIntoUI(); }
+
+/* ---------- example ---------- */
+function loadExample(){ const p=newPlate("Plate 1");
+  p.rawText=`A 0.0533 0.0497 0.0515 0.0538 0.0855 0.0489 0.0518 0.0564 0.0516 0.055 0.053 0.0535
+A 0.0536 0.0469 0.0479 0.049 0.0559 0.0501 0.0505 0.0504 0.0505 0.0501 0.0526 0.0515
+A 0.0507 0.049 0.047 0.0492 0.0488 0.048 0.0483 0.054 0.0493 0.0496 0.0502 0.0526
+A 0.05 0.0491 0.0494 0.0483 0.0377 0.0461 0.0493 0.0481 0.0483 0.0508 0.0479 0.0522
+B 1.5356 1.575 1.125 0.6927 0.3559 0.1539 0.0878 0.054 0.0463 0.0434 0.0435 0.0552
+B 1.6032 1.6491 1.3469 0.7632 0.41 0.1471 0.0818 0.0587 0.0446 0.0415 0.0389 0.042
+B 1.3217 1.3146 0.8594 0.6636 0.3105 0.1226 0.0746 0.0493 0.046 0.042 0.0414 0.0448
+B 1.5435 1.2529 0.9108 0.5768 0.3133 0.1327 0.0698 0.0516 0.0433 0.0428 0.0417 0.0434`;
+  p.concs=numsFrom("20, 6.66666667, 2.22222222, 0.74074074, 0.246914, 0.08230453, 0.02743484, 0.00914495, 0.00304832, 0.00101611, 0.0003387, 0");
+  p.unit="µg/mL"; p.groupLabels=["A","A","A","A","B","B","B","B"]; p.bgMode="zero";
+  session.plates=[p]; session.activeId=p.id; session.hidden={}; renderTabs(); parseActive(); }
+
+/* ---------- wiring ---------- */
+$("loadExample").onclick=loadExample;
+$("parseBtn").onclick=parseActive;
+$("raw").oninput=()=>{ const p=P(); if(p) p.rawText=$("raw").value; };
+$("orient").onchange=()=>{ saveUIToActive(); const p=P(); p.groupLabels=Array(nGroups(p)).fill(""); loadActiveIntoUI(); };
+$("unit").oninput=()=>{ const p=P(); if(p) p.unit=$("unit").value.trim(); };
+$("concText").oninput=()=>{ saveUIToActive(); renderPlate(); refreshCurveStyles(); };
+$("bgMode").onchange=()=>{ const p=P(); p.bgMode=$("bgMode").value; renderPlate(); };
+$("dilGen").onclick=()=>{ const top=+$("dilTop").value,fold=+$("dilFold").value,n=+$("dilN").value; const arr=[]; let v=top;
+  for(let i=0;i<n;i++){ arr.push(parseFloat(v.toPrecision(9))); v/=fold; } if($("dilZero").checked) arr.push(0);
+  $("concText").value=arr.join(", "); saveUIToActive(); renderPlate(); };
+$("combine").onchange=()=>{ session.combine=$("combine").checked; refreshCurveStyles(); if(lastResults) analyze(); };
+$("analyzeBtn").onclick=analyze;
+$("exportSvg").onclick=exportSVG;
+$("exportPng").onclick=exportPNG;
+$("pngScale").onchange=()=>{ const sz=chartSize(); if(sz) updatePngInfo(sz.w,sz.h); };
+$("saveJson").onclick=saveJSON;
+$("loadJsonBtn").onclick=()=>$("jsonFile").click();
+$("jsonFile").onchange=e=>{ if(e.target.files[0]) loadJSON(e.target.files[0]); };
+
+(function(){ const p=newPlate("Plate 1"); session.plates=[p]; session.activeId=p.id; renderTabs(); })();
+</script>
+</body>
+</html>
